@@ -26,12 +26,12 @@ def get_decoder_step(voc, emb_size, hid_size):
     
 
     # prev_tokens: [batch_size] of int32
-    prev_tokens = L.Input([], dtype='int32')
+    prev_tokens_in = L.Input([1], dtype='int32')
     # prev_state: [batch_size, hid_size], same as returned by encoder
     prev_state = L.Input([hid_size], dtype='float32')
     # states: encoder outputs [batch_size, length, hid_size]
     states = L.Input([None, hid_size], dtype='float32')
-
+    prev_tokens = L.Reshape([])(prev_tokens_in)
     
     # apply attention
     
@@ -58,5 +58,5 @@ def get_decoder_step(voc, emb_size, hid_size):
     new_token_probs = token_prob(new_state)
     # ^-- [batch_size, len(voc)]
     
-    return tf.keras.Model(inputs=[prev_tokens, prev_state, states],
+    return tf.keras.Model(inputs=[prev_tokens_in, prev_state, states],
                           outputs=[new_state, new_token_probs, state_probs])

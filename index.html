@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+ <meta charset="utf-8">
+ <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@2.1.0/dist/tf.min.js"></script>
+ <script src="https://d3js.org/d3.v4.js"></script>
+    
+</head>
+  <textarea id="get_area" width=600px></textarea>
+  <button id="predict_btn" onclick="predict()" disabled> Translate </button>
+  <br>
+  <textarea id="predictions_area" width=600px disabled></textarea>
+  <br>
+  <svg id="image" width="1000" height="500"> 
+      
+  </svg>
+        
+  <script>
+    
+    var svg = d3.select("#image")
+    function draw_svg_rects(figure)
+    {
+        var rects = svg.selectAll("rect").data(figure).enter().append("rect");
+        rects.attr("x", function (d) { return d.x + 85; }).attr("y", function (d) { return d.y + 110; }).attr("width", function (d) { return d.width; }).attr("height", function (d) { return d.height; }).style("fill", function (d) { return d.fill; });
+    }
+      
+    function draw_svg_texts(figure)
+    {
+        var texts = svg.selectAll("text").data(figure).enter().append("text");
+        texts.attr("text-anchor", function (d) { return d.text_anchor; }).attr("transform", function (d) { return d.transform; }).text(function (d) { return d.text; }).attr("font-family", "sans-serif").attr("font-size", "15px").attr("fill", "black");
+    }
+    
+    
+      
+    var enc, dec, token_to_num_src, token_to_num_dst, num_to_token_dst, eos, bpe_rules_src, bpe_rules_dst, bpe_sep, bpe_terminal, HID_SIZE, bpe_rule_priority={}, is_initialized=false;
+    let tokenizer_regex = new RegExp(/([A-zÀ-ÿ-]+|[0-9._]+|.|!|\?|'|"|:|;|,|-)/i);
+      
+    async function initialize() {
+        voc_response = await fetch('files/voc.json');
+        [bpe_rules_src, bpe_rules_dst, token_to_num_src, token_to_num_dst, num_to_token_dst, bpe_sep, eos, bpe_terminal, HID_SIZE] = await voc_response.json();
+        enc = await tf.loadLayersModel('files/enc/model.json');
+        dec = await tf.loadLayersModel('files/dec/model.json');
+        
+        
+        
+        
+        bpe_rules_src.forEach((pair, index) => bpe_rule_priority[pair[0] + " " + pair[1]] = index);
+        is_initialized = true;
+        
+        /* enable frontend here */
+        document.getElementById("predict_btn").disabled = false;
+        console.log("Initialized sucessfully!")
+    }
+    function preprocess(string) {
+        // raw string -> array of tokens -> array of bpe segments
+        console.assert(is_initialized, "Model is not initialized!")
+        return tokenize(string).flatMap(bpeize_token)
+    }
+    
+    function tokenize(string) {
+        let tokens = [];
+        string.split(tokenizer_regex)
+            .filter(token => (token != ' ' && token != '' && token != '\n'))
+            .forEach(token => tokens.push(token.toLowerCase()))
+        return tokens
+    }
+    
+    function bpeize_token(token) {
+        // split a single token into an Array of bpe segments; equivalent to https://github.com/rsennrich/subword-nmt v0.2
+        let segments = token.split('');
+        segments[segments.length - 1] += bpe_terminal;
+        
+        while(segments.length > 1){
+            // find bpe rule with lowest index
+            var best_rule_index = Infinity;
+            for(let i = 0; i < segments.length - 1; i++) {
+                let cand = segments[i] + " " + segments[i + 1];
+                if ((cand in bpe_rule_priority) && (bpe_rule_priority[cand] < best_rule_index))
+                    best_rule_index = bpe_rule_priority[cand];
+            }
+            if (best_rule_index == Infinity)
+                break
+            // apply that rule everywhere
+            let [chosen_left, chosen_right] = bpe_rules_src[best_rule_index];
+            for(let i = segments.length - 2; i >= 0; i--) {
+                if (segments[i] == chosen_left && segments[i + 1] == chosen_right) {
+                    segments.splice(i + 1, 1);
+                    segments[i] = chosen_left + chosen_right;
+                }
+            }
+            
+        }
+        // don't print end-of-word symbols
+        end = segments.length - 1
+        if (segments[end] == bpe_terminal)
+            segments.pop()
+        else if (segments[end].endsWith(bpe_terminal))
+            segments[end] = segments[end].slice(0, segments[end].length - bpe_terminal.length);
+        
+        // append bpe separator to all segments except last
+        for (let i = 0; i < segments.length - 1; i++)
+            segments[i] += bpe_sep;
+        
+        return segments
+    }
+    var prediction_array = 0
+    var prediction_tensor = 0
+    var x = 0
+    async function predict(){
+        var figure = [];
+        var figure1 = [];
+        svg.selectAll("*").remove();
+        var str = document.getElementById("get_area").value
+        if(str == '')
+        {
+            return 0;
+        }
+        x = preprocess(str);
+        figure1.push({"text_anchor": "left", "text": "_BOS_", "transform": "translate(100, 100) rotate(-90)"})
+        for(var i = 1; i < x.length + 1; i++)
+        {
+            figure1.push({"text_anchor": "left", "transform": `translate(${i * 21 + 100}, 100) rotate(-90)`, "text": x[i - 1]})
+        }
+        figure1.push({"text_anchor": "left", "transform": `translate(${(x.length + 1) * 21 + 100}, 100) rotate(-90)`, "text": "_EOS_"})
+        x_array = new Array(x.length + 2);
+        x_array[0] = token_to_num_src['_BOS_'];
+        x_array[x_array.length - 1] = token_to_num_src['_EOS_'];
+        for(var i = 0; i < x.length; i++)
+        {
+            x_array[i + 1] = token_to_num_src[x[i]];
+        }
+        x = tf.tensor(x_array, [1, x_array.length], dtype="int32");
+        var next_probs, state_probs;
+        var states = enc.predict(x);
+        var state = tf.zeros([1, HID_SIZE]);
+        var tokens = tf.tensor([token_to_num_dst['_BOS_']], [], dtype="int32");
+        var strres = ''
+        var it = 0;
+        while(1)
+        {
+            var res = dec.predict([tf.reshape(tokens, [1, 1]), state, states]);
+            state = res[0];
+            next_probs = res[1];
+            state_probs = res[2];
+            var array_state_probs = state_probs.arraySync()
+            for(var i = 0; i < array_state_probs[0].length; i++)
+            {
+                var value = Math.round(array_state_probs[0][i] * 255);
+                figure.push({"x": 21 * i, "y": 21 * it, "width": 20, "height": 20, "fill": `rgb(${value}, ${value}, ${value})`})
+            }
+            next_probs = tf.reshape(next_probs, [-1]);
+            tokens = next_probs.argMax();
+            var token = tokens.arraySync();
+            console.log(token)
+            figure1.push({"text_anchor": "end", "transform": `translate(75, ${125 + it * 21}) rotate(0)`, "text": num_to_token_dst[token]})
+            if (num_to_token_dst[token] == '_EOS_' || it > x_array.length * 2)
+            {
+                break;
+            }
+            strres += num_to_token_dst[token] + ' '
+            it++;
+        }
+        draw_svg_rects(figure);
+        draw_svg_texts(figure1);
+        strres = strres.split(bpe_sep + ' ').join('')
+        document.getElementById("predictions_area").textContent = strres;
+    }
+    
+      
+    document.addEventListener('DOMContentLoaded', initialize);
+      
+      
+  </script>
+
+<body>
+    
+
+</body>
+</html>
