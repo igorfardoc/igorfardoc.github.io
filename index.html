@@ -36,10 +36,10 @@
     let tokenizer_regex = new RegExp(/([A-zÀ-ÿ-]+|[0-9._]+|.|!|\?|'|"|:|;|,|-)/i);
       
     async function initialize() {
-        voc_response = await fetch('files/voc.json');
+        voc_response = await fetch('https://raw.githubusercontent.com/igorfardoc/igorfardoc.github.io/main/files/voc.json');
         [bpe_rules_src, bpe_rules_dst, token_to_num_src, token_to_num_dst, num_to_token_dst, bpe_sep, eos, bpe_terminal, HID_SIZE] = await voc_response.json();
-        enc = await tf.loadLayersModel('files/enc/model.json');
-        dec = await tf.loadLayersModel('files/dec/model.json');
+        enc = await tf.loadLayersModel('https://raw.githubusercontent.com/igorfardoc/igorfardoc.github.io/main/files/enc/model.json');
+        dec = await tf.loadLayersModel('https://raw.githubusercontent.com/igorfardoc/igorfardoc.github.io/main/files/dec/model.json');
         
         
         
