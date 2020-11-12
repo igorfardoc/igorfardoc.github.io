@@ -3,43 +3,122 @@
 <head>
  <meta charset="utf-8">
  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@2.1.0/dist/tf.min.js"></script>
- <script src="https://d3js.org/d3.v4.js"></script>
-    
+ <script src="https://d3js.org/d3.v3.min.js" charset="utf-8"></script>
+ <style>
+     :root{}
+     .prompt_text {
+            font-size: 24px;
+            font-family: "Comic Neue", "Arial";
+            margin-top: 10px;
+            margin-bottom: 10px;
+            font-weight: bold;
+            text-align: center;
+            background-color: #ebf6fa;
+     }
+     .lm_window {
+            width: 70%;
+            border: 1px solid #ccc;
+            border-radius: 1px;
+            margin: 10px 5px;
+            padding: 3px;
+            background-color: white;
+            text-align: center;
+     }
+     .lm_window:hover {
+        box-shadow: 0 6px 12px #377b94, 0 4px 4px #377b94;
+     }
+     .comment_text {
+            font-size: 16px;
+            font-family: "Gill Sans", sans-serif;
+            font-style: italic;
+            text-align: center;
+     }
+     .rect_button {
+          width: 25%;
+          background-color: #fafafa;
+          font-size: 20px;
+          font-family: "Comic Neue", "Arial";
+          font-weight: bold;
+          color: black;
+          margin-right: 20px;
+          margin-left: 20px;
+          margin-top: 10px;
+          margin-bottom: 10px;
+          border: 0px solid black;
+          border-radius: 12px;
+          padding: 20px;
+          padding-top: 0px;
+          padding-bottom: 0px;
+          text-decoration: none;
+          display: inline-block;
+          text-align: center;
+          box-shadow: 0px 2px 3px #377b94, 0 1px 1px #377b94;
+     }
+     .rect_button:hover {
+            box-shadow: 0 3px 6px #377b94, 0 2px 2px #377b94;
+            cursor: pointer;
+     }
+     .rect_button:focus {
+            outline:none !important;
+     }
+     .button_text {
+            margin-top: 3px;
+            margin-bottom: 3px;
+     }
+ </style>
 </head>
-  <textarea id="get_area" width=600px></textarea>
-  <button id="predict_btn" onclick="predict()" disabled> Translate </button>
-  <br>
-  <textarea id="predictions_area" width=600px disabled></textarea>
-  <br>
-  <svg id="image" width="1000" height="500"> 
-      
-  </svg>
-        
+
+<body>
+  <center>
+      <div class="lm_window" style="width:70%;">
+          <p class="prompt_text">Write german phrase and translate it!</p>
+          <div id="inputs" style="width:86%;margin-left:7%;margin-right:7%;">
+              <p class="comment_text" style="color:gray;font-size:16px;">Enter german text. For example: Übung macht den Meister</p>
+              <textarea placeholder="Enter text here" id="get_area" style="width:100%;resize:vertical;margin-left:5px;height:10vh;margin-top:0px;margin-bottom:0px;"></textarea>
+              <p class="comment_text" id="waiting_text" style="color:gray;font-size:16px;display:block;">Waiting for model to load... (it could take 5-15sec)</p>
+              <button id="predict_btn" class="rect_button" onclick="predict()" style="display:none;">
+                    <p class="button_text" style="font-size:16px">Translate</p>
+              </button>
+          </div>
+          <p class="comment_text" id="hidden_text" style="color:gray;font-size:16px;display:none;">Click on the translation below to see attention</p>
+          <svg id="image" style="width:100%;height:100vh;"> 
+
+          </svg>
+          <svg id="image1" style="width:100%;height:60vh;"> 
+
+          </svg>
+      </div>
+  </center>
   <script>
     
-    var svg = d3.select("#image")
-    function draw_svg_rects(figure)
+    var svg = d3.select("#image");
+    var svg1 = d3.select("#image1");
+    function draw_svg_rects(figure, svg)
     {
         var rects = svg.selectAll("rect").data(figure).enter().append("rect");
-        rects.attr("x", function (d) { return d.x + 85; }).attr("y", function (d) { return d.y + 110; }).attr("width", function (d) { return d.width; }).attr("height", function (d) { return d.height; }).style("fill", function (d) { return d.fill; });
+        rects.attr("x", function (d) { return d.x; }).attr("y", function (d) { return d.y; }).attr("width", function (d) { return d.width; }).attr("height", function (d) { return d.height; }).style("fill", function (d) { return d.fill; });
     }
       
-    function draw_svg_texts(figure)
+    function draw_svg_texts(figure, svg)
     {
         var texts = svg.selectAll("text").data(figure).enter().append("text");
-        texts.attr("text-anchor", function (d) { return d.text_anchor; }).attr("transform", function (d) { return d.transform; }).text(function (d) { return d.text; }).attr("font-family", "sans-serif").attr("font-size", "15px").attr("fill", "black");
+        texts.attr("text-anchor", function (d) { return d.text_anchor; }).attr("transform", function (d) { return d.transform; }).text(function (d) { return d.text; }).attr("font-family", "sans-serif").attr("font-size", function (d) { return `${d.font_size}px`; }).attr("fill", "black");
     }
     
     
-      
+    var g = [];
+    var state_probs_in_ver = {};
+    var depth = [];
+    var const1 = 10;
     var enc, dec, token_to_num_src, token_to_num_dst, num_to_token_dst, eos, bpe_rules_src, bpe_rules_dst, bpe_sep, bpe_terminal, HID_SIZE, bpe_rule_priority={}, is_initialized=false;
+    var BEAM_SIZE = 4;
     let tokenizer_regex = new RegExp(/([A-zÀ-ÿ-]+|[0-9._]+|.|!|\?|'|"|:|;|,|-)/i);
       
     async function initialize() {
-        voc_response = await fetch('https://raw.githubusercontent.com/igorfardoc/igorfardoc.github.io/main/files/voc.json');
+        voc_response = await fetch('https://raw.githubusercontent.com/igorfardoc/igorfardoc.github.io/main/voc.json');
         [bpe_rules_src, bpe_rules_dst, token_to_num_src, token_to_num_dst, num_to_token_dst, bpe_sep, eos, bpe_terminal, HID_SIZE] = await voc_response.json();
-        enc = await tf.loadLayersModel('https://raw.githubusercontent.com/igorfardoc/igorfardoc.github.io/main/files/enc/model.json');
-        dec = await tf.loadLayersModel('https://raw.githubusercontent.com/igorfardoc/igorfardoc.github.io/main/files/dec/model.json');
+        enc = await tf.loadLayersModel('https://raw.githubusercontent.com/igorfardoc/igorfardoc.github.io/main/enc/model.json');
+        dec = await tf.loadLayersModel('https://raw.githubusercontent.com/igorfardoc/igorfardoc.github.io/main/dec/model.json');
         
         
         
@@ -48,7 +127,8 @@
         is_initialized = true;
         
         /* enable frontend here */
-        document.getElementById("predict_btn").disabled = false;
+        document.getElementById("waiting_text").style.display = "none";
+        document.getElementById("predict_btn").style.display = "inline";
         console.log("Initialized sucessfully!")
     }
     function preprocess(string) {
@@ -103,10 +183,407 @@
         
         return segments
     }
+      
+    function pair_comp(a, b)
+    {
+        if(a[0] < b[0])
+        {
+            return -1;
+        }
+        if(a[0] > b[0])
+        {
+            return 1;
+        }
+        return 0;
+    }
+    function beam_search(states)
+    {
+        var token_in_ver = [token_to_num_dst["_BOS_"]];
+        var number_in_ver = [1];
+        var prob_in_ver = {};
+        var prev = [-1];
+        var now_ver = 1;
+        var beam = [[0, tf.zeros([1, HID_SIZE]), [token_to_num_dst["_BOS_"]], 0]];
+        var best_logprobend = -1000000000;
+        var best_tokens = [];
+        var it = 0;
+        while(it < Math.max(5, 2 * states.shape[1]) && beam.length > 0)
+        {
+            var new_beam = [];
+            for(var i = 0; i < beam.length; i++)
+            {
+                var res = dec.predict([tf.tensor([[beam[i][2][beam[i][2].length - 1]]]), beam[i][1], states])
+                var state = res[0];
+                var next_probs = res[1];
+                var state_probs = res[2];
+                state_probs_in_ver[beam[i][3]] = state_probs;
+                var sorted_tokens_by_probs = next_probs.reshape([-1]).arraySync();
+                prob_in_ver[beam[i][3]] = beam[i][0] + Math.log(sorted_tokens_by_probs[token_to_num_dst["_EOS_"]]);
+                for(var j = 0; j < sorted_tokens_by_probs.length; j++)
+                {
+                    sorted_tokens_by_probs[j] = [sorted_tokens_by_probs[j], j];
+                }
+                sorted_tokens_by_probs.sort(pair_comp);
+                for(var j = 0; j < BEAM_SIZE; j++)
+                {
+                    var new_token = sorted_tokens_by_probs[sorted_tokens_by_probs.length - 1 - j][1];
+                    var new_logprob = beam[i][0] + Math.log(sorted_tokens_by_probs[sorted_tokens_by_probs.length - 1 - j][0]);
+                    if(new_logprob < best_logprobend)
+                    {
+                        continue;
+                    }
+                    new_beam.push([new_logprob, state, beam[i][2].concat([new_token]), beam[i][3]]);
+                }
+            }
+            new_beam.sort(pair_comp);
+            new_beam.reverse();
+            beam = [];
+            for(var i = 0; i < Math.min(BEAM_SIZE, new_beam.length); i++)
+            {
+                var now_vertex = new_beam[i];
+                //if(now_vertex[2][now_vertex[2].length - 1] == token_to_num_dst["_EOS_"])
+                //{
+                //    if(best_logprobend < now_vertex[0])
+                //    {
+                //        best_logprobend = now_vertex[0];
+                //        best_tokens = now_vertex[2];
+                //    }
+                //    continue;
+                //}
+                token_in_ver.push(now_vertex[2][now_vertex[2].length - 1]);
+                number_in_ver.push(i + 1);
+                prev.push(now_vertex[3]);
+                now_vertex[3] = now_ver++;
+                if(now_vertex[2][now_vertex[2].length - 1] == token_to_num_dst["_EOS_"])
+                {
+                    prob_in_ver[now_vertex[3]] = -1000000000;
+                    if(best_logprobend < now_vertex[0])
+                    {
+                        best_logprobend = now_vertex[0];
+                        best_tokens = now_vertex[2];
+                    }
+                    continue;
+                }
+                beam.push(now_vertex);
+            }
+            it++;
+        }
+        var g = [];
+        for(var i = 0; i < now_ver; i++)
+        {
+            g.push([]);
+        }
+        for(var i = 1; i < now_ver; i++)
+        {
+            g[prev[i]].push(i);
+        }
+        return [g, token_in_ver, number_in_ver, prob_in_ver];
+    }
+      
+    function add_to_dict(d, delta)
+    {
+        var d1 = {};
+        for(var k in d)
+        {
+            d1[k] = d[k] + delta;
+        }
+        return d1;
+    }
+    
+    function get_x(v, d=0)
+    {
+        depth[v] = d;
+        if(g[v].length == 0)
+        {
+            var ret_dict = {};
+            ret_dict[v] = 0;
+            return [ret_dict, [0], [0]];
+        }
+        var now_tree, l, r;
+        var res	= get_x(g[v][0], d + 1);
+        now_tree = res[0];
+        l = res[1];
+        r = res[2];
+        for(var i = 1; i < g[v].length; i++)
+        {
+            var now_tree1, l1, r1;
+            var res	= get_x(g[v][i], d + 1);
+            now_tree1 = res[0];
+            l1 = res[1];
+            r1 = res[2];
+            var max1 = -1000000000;
+            for(var j = 0; j < Math.min(r.length, l1.length); j++)
+            {
+                max1 = Math.max(max1, r[j] - l1[j]);
+            }
+            var delta = const1 + max1;
+            now_tree1 = add_to_dict(now_tree1, delta);
+            for(var j = 0; j < r1.length; j++)
+            {
+                r1[j] += delta;
+                l1[j] += delta;
+            }
+            for(var k in now_tree1)
+            {
+                now_tree[k] = now_tree1[k];
+            }
+            for(var j = 0; j < Math.max(l.length, l1.length); j++)
+            {
+                if(j < l.length && j < l1.length)
+                {
+                    l[j] = Math.min(l[j], l1[j]);
+                }
+                else if(j < l.length)
+                {
+                    break;
+                }
+                else
+                {
+                    l = l.concat(l1.slice(j));
+                }
+            }
+            for(var j = 0; j < Math.max(r.length, r1.length); j++)
+            {
+                if(j < r.length && j < r1.length)
+                {
+                    r[j] = Math.max(r[j], r1[j]);
+                }
+                else if(j < r.length)
+                {
+                    break;
+                }
+                else
+                {
+                    r = r.concat(r1.slice(j));
+                }
+            }
+        }
+        var mid = 0;
+        for(var i = 0; i < g[v].length; i++)
+        {
+            mid += now_tree[g[v][i]];
+        }
+        now_tree[v] = mid / g[v].length;
+        l = [now_tree[v]].concat(l);
+        r = [now_tree[v]].concat(r);
+        return [now_tree, l, r];
+    }
+    var need_state_probs = [];
+    var need_vers = [];
+    var str, x, x_array, states, res, g1, token_in_ver, number_in_ver, tree, x_arr, prob_in_ver;
+    
+    function dfs(v, find)
+    {
+        if(v == find)
+        {
+            need_vers.push(v);
+            return true;
+        }
+        for(var i = 0; i < g[v].length; i++)
+        {
+            var u = g[v][i];
+            if(dfs(u, find))
+            {
+                need_state_probs.push(state_probs_in_ver[v]);
+                if(v != 0)
+                {
+                    need_vers.push(v);
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+      
+    function draw_attention(v, svg, max_width, max_height)
+    {
+        if(v == 0)
+        {
+            return;
+        }
+        svg.selectAll("*").remove();
+        need_state_probs = [];
+        need_vers = [];
+        dfs(0, v);
+        need_state_probs.reverse();
+        need_vers.reverse();
+        var max_length1 = 0;
+        var max_length2 = 0;
+        for(var i = 0; i < x_arr.length; i++)
+        {
+            max_length1 = Math.max(max_length1, x_arr[i].replace("~@~@", "@").length);
+        }
+        for(var i = 0; i < need_vers.length; i++)
+        {
+            max_length2 = Math.max(max_length2, token_in_ver[need_vers[i]].replace("~@~@", "@").length);
+        }
+        var figure = [];
+        var figure1 = [];
+        var square_width = Math.min((max_height - 20) / (max_length1 + need_vers.length), (max_width - 20) / (max_length2 + x_arr.length));
+        var deltax = (max_width - square_width * x_arr.length) / 2;
+        var deltay = square_width * max_length1;
+        for(var i = 0; i < need_vers.length; i++)
+        {
+            figure1.push({"text_anchor": "end", "transform": `translate(${deltax - square_width / 2}, ${deltay + (i + 0.9) * square_width}) rotate(0)`, "text": token_in_ver[need_vers[i]].replace("~@~@", "…"), "font_size": square_width * 0.8});
+        }
+        for(var i = 0; i < x_arr.length; i++)
+        {
+            figure1.push({"text_anchor": "left", "transform": `translate(${(i + 0.8) * square_width + deltax}, ${deltay - square_width / 2}) rotate(-90)`, "text": x_arr[i].replace("~@~@", "…"), "font_size": square_width * 0.8});
+        }
+        for(var i = 0; i < need_vers.length; i++)
+        {
+            var arr = need_state_probs[i].reshape([-1]).arraySync();
+            for(var j = 0; j < arr.length; j++)
+            {
+                var value = arr[j] * 255;
+                figure.push({"x": deltax + square_width * j, "y": deltay + square_width * i, "width": square_width, "height": square_width, "fill": `rgb(${value}, ${value}, ${value})`})
+            }
+        }
+        draw_svg_rects(figure, svg);
+        draw_svg_texts(figure1, svg);
+    }
+      
+    var circles_data_example = [{"x": 200, "y": 200, "text": "#1", "text1": "the cat"}, {"x": 100, "y": 100, "text": "#2", "text1": "at bed"}];
+    var edges_data_example = [{"x1": 200, "y1": 200, "x2": 100, "y2": 100}];
+    
+    function dfs_bold(v, find)
+    {
+        if(v == find)
+        {
+            bold_dict[v] = "bold";
+            return true;
+        }
+        for(var i = 0; i < g[v].length; i++)
+        {
+            var u = g[v][i];
+            if(dfs_bold(u, find))
+            {
+                if(v != 0)
+                {
+                    bold_dict[v] = "bold";
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+    var bold_dict = {};
+    function draw_tree(nowtree, g, token_in_ver, number_in_ver, prob_in_ver, svg, depth, max_width, max_height)
+    {
+        svg.selectAll("*").remove();
+        svg1.selectAll("*").remove();
+        var circle_attrs = {r: 12, fill: "#87CEEB", stroke: "navy", "stroke-width": 1.5};
+        var line_attrs = {"fill": "none", "stroke": "black", "stroke-width": 1.0};
+        
+        
+        var n = g.length;
+        var max_depth = 0;
+        var max_x = 0;
+        for(var i = 0; i < n; i++)
+        {
+            max_depth = Math.max(max_depth, depth[i]);
+            max_x = Math.max(max_x, nowtree[i]);
+        }
+        var deltax = 30;
+        var deltay = 110;
+        var x_koef = (max_height - deltay - 40) / max_x;
+        var y_koef = (max_width - deltax - 40) / max_depth;
+        var circles_data = [];
+        var edges_data = [];
+        var coords = [];
+        bold_dict = {};
+        for(var i = 0; i < n; i++)
+        {
+            bold_dict[i] = "normal";
+        }
+        var max1 = -1000000000;
+        var id1 = -1;
+        for(var i = 0; i < n; i++)
+        {
+            if(prob_in_ver[i] > max1)
+            {
+                max1 = prob_in_ver[i];
+                id1 = i;
+            }
+        }
+        dfs_bold(0, id1);
+        for(var i = 0; i < n; i++)
+        {
+            circles_data.push({"x": y_koef * depth[i] + deltax, "y": nowtree[i] * x_koef + deltay, "text": "#" + number_in_ver[i].toString(), "text1": token_in_ver[i].replace("~@~@", "…"), "font_weight": bold_dict[i]});
+        }
+        for(var i = 0; i < n; i++)
+        {
+            for(var j = 0; j < g[i].length; j++)
+            {
+                var u = g[i][j];
+                edges_data.push({"x1": circles_data[i]["x"], "y1": circles_data[i]["y"], "x2": circles_data[u]["x"], "y2": circles_data[u]["y"]});
+            }
+        }
+        
+        
+        svg.selectAll("line").data(edges_data).enter().append("line").attr(line_attrs).attr("x1", function(d){return d.x1;}).attr("y1", function(d){return d.y1;}).attr("x2", function(d){return d.x2;}).attr("y2", function(d){return d.y2;});
+        var circles = svg.selectAll("g circleWithText").data(circles_data).enter().append("g").attr("transform", function(d){return `translate(${d.x}, ${d.y})`}).attr("data-entry-index", function(d, i){return i});
+        circles.append("circle").attr(circle_attrs);
+        circles.append("text").text(function(d){return d.text1;}).attr('dy', -16).style("text-anchor", "middle").style("font-size", "16px").style("font-weight", function(d){return d.font_weight;});
+        circles.append("text").text(function(d){return d.text;}).attr('dy', "0.3em").style("text-anchor", "middle").style("font-weight", function(d){return d.font_weight;});
+        circles
+                .on("mouseover", function(d, i) {d3.select(this).style("cursor", "pointer");})
+                .on("mouseout", function(d, i) {d3.select(this).style("cursor", "default");})
+                .on("click", function(d, i) {draw_attention(parseInt(this.dataset.entryIndex), svg1, document.getElementById("image1").clientWidth, document.getElementById("image1").clientHeight)});
+    }
+      
+      
+    
+      
+      
+      
+    async function predict()
+    {
+        state_probs_in_ver = {};
+        str = document.getElementById("get_area").value;
+        x_arr = preprocess(str);
+        x_array = new Array(x_arr.length + 2);
+        x_array[0] = token_to_num_src['_BOS_'];
+        x_array[x_array.length - 1] = token_to_num_src['_EOS_'];
+        for(var i = 0; i < x_arr.length; i++)
+        {
+            x_array[i + 1] = token_to_num_src[x_arr[i]];
+        }
+        x = tf.tensor(x_array, [1, x_array.length], dtype="int32");
+        states = enc.predict(x);
+        res = beam_search(states);
+        g1 = res[0];
+        token_in_ver = res[1];
+        number_in_ver = res[2];
+        prob_in_ver = res[3];
+        for(var i = 0; i < token_in_ver.length; i++)
+        {
+            token_in_ver[i] = num_to_token_dst[token_in_ver[i]];
+        }
+        g = [];
+        depth = [];
+        for(var i = 0; i < g1.length; i++)
+        {
+            depth.push(0);
+            g.push(g1[i]);
+        }
+        x_arr = ["_BOS_"].concat(x_arr)
+        x_arr.push("_EOS_");
+        tree = get_x(0)[0];
+        draw_tree(tree, g, token_in_ver, number_in_ver, prob_in_ver, svg, depth, document.getElementById("image").clientWidth, document.getElementById("image").clientHeight);
+        var element = document.getElementById("hidden_text");
+        element.style.display = "block";
+        
+    }
+      
+      
+      
+      
+      
     var prediction_array = 0
     var prediction_tensor = 0
     var x = 0
-    async function predict(){
+    async function predict1(){
         var figure = [];
         var figure1 = [];
         svg.selectAll("*").remove();
@@ -171,9 +648,5 @@
       
       
   </script>
-
-<body>
-    
-
 </body>
 </html>

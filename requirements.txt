@@ -1,6 +1,0 @@
-subword-nmt>=0.3.6
-numpy>=1.14.5
-matplotlib>=3.0.0
-tensorflow==2.2.0
-tensorflow-cpu==2.2.0
-tensorflowjs==2.1.0
